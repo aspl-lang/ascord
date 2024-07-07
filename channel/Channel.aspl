@@ -1,0 +1,12 @@
+[public]
+class Channel {
+    
+    [readpublic]
+    property string id
+
+    [public]
+    method construct(string id){
+        this.id = id
+    }
+
+}

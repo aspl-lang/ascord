@@ -1,0 +1,21 @@
+import ascord.user
+import ascord.channel
+
+[public]
+class CommandMessage extends Message{
+
+	[readpublic]
+	property string command
+	[readpublic]
+	property list<string> args
+	
+	[public]
+	method construct(string content, string command, list<string> args, Channel channel, User sender){
+		this.content = content
+		this.command = command
+		this.args = args
+		this.channel = channel
+		this.sender = sender
+	}
+	
+}

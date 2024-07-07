@@ -1,0 +1,16 @@
+import ascord
+
+[public]
+[abstract]
+class InteractionInstance{
+
+    property Bot bot
+    [readpublic]
+    property string id
+    [readpublic]
+    property string token
+    [readpublic]
+    property string applicationId
+    // TODO: Add more properties here
+
+}

@@ -1,0 +1,41 @@
+import io
+
+[public]
+class Logger {
+
+    property string? logfile
+
+    [public]
+    method construct(string? logfile = null) {
+        this.logfile = logfile
+    }
+    
+    [public]
+    method debug(string message) {
+        $if debug{
+            log("DEBUG: " + message)
+        }
+    }
+
+    [public]
+    method warn(string message) {
+        log("WARNING: " + message)
+    }
+
+    [public]
+    method error(string message) {
+        log("ERROR: " + message)
+    }
+
+    method log(string message) {
+        print(message)
+        if(logfile != null){
+            var previous = ""
+            if(io.exists_file(logfile)) {
+                previous = io.read_file(logfile)
+            }
+            io.write_file(logfile, previous + message + "\n")
+        }
+    }
+
+}

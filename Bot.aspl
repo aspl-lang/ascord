@@ -1,0 +1,255 @@
+import time
+import ascord.logger
+import ascord.user
+import ascord.message
+import ascord.channel
+import ascord.interaction.appcommand
+import ascord.interaction.slashcommand
+import json
+import internet
+
+[public]
+class Bot{
+	
+	property string token
+	property WebSocketClient socket
+
+	property Logger logger
+
+	[public]
+	property string? commandPrefix
+	[public]
+	property callback onReady = callback(){}
+	[public]
+	property callback<Message> onMessage = callback(Message message){}
+	[public]
+	property callback<CommandMessage> onCommand = callback(CommandMessage command){}
+
+	property map<string, SlashCommand> slashCommands = map<string, SlashCommand>{}
+
+	property int heartbeatInterval
+	property int? heartbeat = null
+	property bool heartbeatAcknowledged = false
+
+	property string sessionId
+	property string resumeGatewayUrl
+
+	property bool closed = false
+	property bool reconnect = false
+
+	[public]
+	method construct(Logger? logger = null){
+		if(logger == null){
+			this.logger = new Logger()
+		}else{
+			this.logger = logger
+		}
+	}
+
+	method processMessage(User sender, string message, Channel channel){
+		if(message == ""){
+			// TODO: Process embeds
+			return
+		}
+		if(commandPrefix != null && message.startsWith(commandPrefix?!)){
+			var string command = message.after(commandPrefix?!.length - 1).split(" ")[0]
+			var list<string> commandArgs = []
+			if(command.length < message.length){
+				message.after(command.length).split(" ")
+			}
+			onCommand.(new CommandMessage(message, command, commandArgs, channel, sender))
+		}else{
+			onMessage.(new Message(message, channel, sender))
+		}
+	}
+
+	method process(string response){
+		var map<string, any> r = map<string, any>(json.decode(response))
+		if(r.containsKey("s") && r["s"] != null){
+			heartbeat = int(r["s"])
+		}
+		logger.debug("R: " + r["op"])
+		if(r["op"] == 10){
+			heartbeatInterval = int(int(map<string, any>(r["d"])["heartbeat_interval"]) / 2f)
+			if(reconnect){ // TODO: Can this ever be reached?
+				logger.debug("Now sending reconnect event...")
+				reconnect = false
+				var msg = json.encode(map<string, any>{"op" => 6, "d" => map<string, any>{"token" => token, "session_id" => sessionId, "seq" => heartbeat}})
+				socket.send(msg)
+			}else{
+				heartbeatTask+()
+				var msg = json.encode(map<string, any>{"op" => 2, "d" => map<string, any>{"token" => token, "properties" => map<string, any>{"$os" => "Windows", "$browser" => "ascord", "$device" => "ascord"}}, "s" => null, "t" => null})
+				socket.send(msg)
+			}
+		}
+		if(r["op"] == 1){
+			logger.debug("Received opcode 1; forcing heartbeat...")
+			heartbeatAcknowledged = false
+			sendHeartbeat()
+		}
+		if(r["op"] == 11){
+			logger.debug("Heartbeat acknowledged")
+			heartbeatAcknowledged = true
+		}
+		if(r["op"] == 7){
+			logger.debug("Received opcode 7; forcing reconnect...")
+			closed = true
+			reconnect = true
+			socket.disconnect(4000, "Reconnecting")
+		}
+		if(r["t"] == "READY"){
+			sessionId = string(map<string, any>(r["d"])["session_id"])
+			resumeGatewayUrl = string(map<string, any>(r["d"])["resume_gateway_url"])
+			onReady.()
+		}
+		if(r["t"] == "MESSAGE_CREATE"){
+			var string? discriminator = string(map<string, any>(map<string, any>(r["d"])["author"])["discriminator"])
+			if(discriminator == "0"){
+				discriminator = null
+			}
+			processMessage(new User(string(map<string, any>(map<string, any>(r["d"])["author"])["id"]), string(map<string, any>(map<string, any>(r["d"])["author"])["username"]), discriminator, map<string, any>(map<string, any>(r["d"])["author"]).containsKey("bot") && bool(map<string, any>(map<string, any>(r["d"])["author"])["bot"])), string(map<string, any>(r["d"])["content"]), new Channel(string(map<string, any>(r["d"])["channel_id"])))
+		}
+		if(r["t"] == "INTERACTION_CREATE"){
+			if(slashCommands.containsKey(string(map<string, any>(map<string, any>(r["d"])["data"])["name"]))){
+				var command = slashCommands[string(map<string, any>(map<string, any>(r["d"])["data"])["name"])]
+				var interaction = new SlashCommandInteraction(command, this, string(map<string, any>(r["d"])["id"]), string(map<string, any>(r["d"])["token"]), string(map<string, any>(r["d"])["application_id"]))
+				command.cb.(
+					interaction,
+					[],
+					new User(string(map<string, any>(map<string, any>(map<string, any>(r["d"])["member"])["user"])["id"]), string(map<string, any>(map<string, any>(map<string, any>(r["d"])["member"])["user"])["username"]), string(map<string, any>(map<string, any>(map<string, any>(r["d"])["member"])["user"])["discriminator"]), map<string, any>(map<string, any>(map<string, any>(r["d"])["member"])["user"]).containsKey("bot") && bool(map<string, any>(map<string, any>(map<string, any>(r["d"])["member"])["user"])["bot"])),
+					new Channel(string(map<string, any>(r["d"])["channel_id"]))
+				)
+			}
+		}
+	}
+
+	method constructSocket(string url) returns WebSocketClient{
+		var socket = new WebSocketClient(url)
+		socket.onConnect = callback() {
+			logger.debug("Connected to Discord Gateway!")
+			closed = false
+		}
+		socket.onMessage = callback(string message){
+			process(message)
+		}
+		socket.onError = callback(string error){
+			logger.error("Socket error: " + error)
+			exit(1)
+		}
+		socket.onClose = callback(int code, string reason){
+			logger.error("Socket closed: " + reason)
+			logger.error("Close code: " + code)
+			closed = true
+		}
+		return socket
+	}
+
+	[public]
+	method start(string botToken){
+		token = botToken
+		socket = constructSocket("wss://gateway.discord.gg")
+		var isInitialConnect = true
+		while(reconnect || isInitialConnect){
+			logger.debug("Connecting to Discord Gateway...")
+			if(reconnect){
+				socket = constructSocket(resumeGatewayUrl)
+			}
+			isInitialConnect = false
+			socket.connect()
+			while(!closed){
+				time.millisleep(100)
+			}
+		}
+	}
+	
+	method heartbeatTask(){
+		// TODO: The bot sometimes disconnects after a few days
+		time.millisleep(long(heartbeatInterval / 2)) // don't send the first heartbeat immediately (this can result in not receiving any events at all)
+		while(true){
+			if(!closed){
+				heartbeatAcknowledged = false
+				sendHeartbeat()
+			}
+			time.millisleep(long(heartbeatInterval / 2))
+			if(!closed && !heartbeatAcknowledged){
+				logger.warn("Heartbeat not acknowledged")
+
+				closed = true
+				reconnect = true
+				socket.disconnect(4000, "Heartbeat not acknowledged") // TODO: Remove the [C]
+				logger.debug("Disconnected; now wait " + (heartbeatInterval / 2) + "ms...")
+				time.millisleep(long(heartbeatInterval / 2)) // wait for the socket to reconnect in the other thread
+			}
+		}
+	}
+
+	method sendHeartbeat(){
+		socket.send(json.encode(map<string, any>{"op" => 1, "d" => heartbeat}))
+	}
+
+	[public]
+	method standardHeaders() returns map<string, list<string>>{
+		return map<string, list<string>>{"Authorization" => list<string>["Bot " + token], "Content-Type" => list<string>["application/json"]}
+	}
+	
+	[public]
+	method postMessage(string message, Channel channel){
+		internet.post("https://discordapp.com/api/v6/channels/" + channel.id + "/messages", json.encode(map<string, any>{"content" => message}), standardHeaders())
+	}
+	
+	[public]
+	method postEmbed(string title, string description, Channel channel){
+		internet.post("https://discordapp.com/api/v6/channels/" + channel.id + "/messages", json.encode(map<string, any>{"content" => "", "embed" => map<string, any>{"title" => title, "description" => description}}), standardHeaders())
+	}
+	
+	[public]
+	method setStatus(string status){
+		socket.send(json.encode(map<string, any>{"op" => 3, "d" => map<string, any>{"game" => map<string, any>{"name" => status, "type" => 0}, "status" => "online", "since" => 0, "afk" => false}, "s" => null, "t" => null}))
+	}
+	
+	[public]
+	method getUser(string? user) returns HttpResponse{
+		if(user == null){
+			return internet.get("https://discordapp.com/api/v6/users/@me", json.encode(map<string, list<string>>{"Authorization" => list<string>["Bot " + token]}))
+		}
+		return internet.get("https://discordapp.com/api/v6/users/" + user, json.encode(map<string, list<string>>{"Authorization" => list<string>["Bot " + token]}))
+	}
+
+	[public]
+    method registerAppCommand(AppCommand command, string application_id, string guild_id){
+        internet.post("https://discord.com/api/v10/applications/" + application_id + "/guilds/" + guild_id + "/commands", json.encode(map<string, any>{"name" => command.name, "type" => command.type}), standardHeaders())
+    }
+
+	[public]
+	method isSlashCommandRegistered(string commandName, string? guild = null) returns bool{
+		// TODO: Not sure if the following is possible; we actually need a snowflake of the command
+		return false
+		
+		var appId = string(map<string, any>(json.decode(internet.get("https://discord.com/api/v10/oauth2/applications/@me", "", standardHeaders()).text.trim()))["id"])
+		if(guild == null){
+			var r = internet.get("https://discord.com/api/v10/applications/" + appId + "/commands/" + commandName, "", standardHeaders())
+			print(r.text)
+		}else{
+			var r = internet.get("https://discord.com/api/v10/applications/" + appId + "/guilds/" + guild + "/commands/" + commandName, "", standardHeaders())
+			print(r.text)
+		}
+	}
+
+    method registerSlashCommand(SlashCommand command, string? guild = null){
+		var appId = string(map<string, any>(json.decode(internet.get("https://discord.com/api/v10/oauth2/applications/@me", "", standardHeaders()).text.trim()))["id"])
+		if(guild == null){
+			internet.post("https://discord.com/api/v10/applications/" + appId + "/commands", json.encode(map<string, any>{"name" => command.name, "type" => 1, "description" => command.description, "options" => list<any>[]}), standardHeaders())
+		}else{
+			internet.post("https://discord.com/api/v10/applications/" + appId + "/guilds/" + guild + "/commands", json.encode(map<string, any>{"name" => command.name, "type" => 1, "description" => command.description, "options" => list<any>[]}), standardHeaders())
+		}
+    }
+
+	[public]
+	method registerSlashCommandIfNotRegistered(SlashCommand command, string? guild = null){
+		this.slashCommands[command.name] = command
+		if(!isSlashCommandRegistered(command.name, guild)){
+			registerSlashCommand(command, guild)
+		}
+	}
+	
+}

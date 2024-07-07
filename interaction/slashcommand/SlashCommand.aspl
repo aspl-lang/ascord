@@ -1,0 +1,21 @@
+import ascord.user
+import ascord.channel
+
+[public]
+class SlashCommand {
+
+    [public]
+    property string name
+    [public]
+    property string description
+    [public]
+    property callback<SlashCommandInteraction, list<string>, User, Channel> cb = callback(SlashCommandInteraction interaction, list<string> args, User user, Channel channel){}
+
+    [public]
+    method construct(string name, string description, callback<SlashCommandInteraction, list<string>, User, Channel> cb) {
+        this.name = name
+        this.description = description
+        this.cb = cb
+    }
+
+}

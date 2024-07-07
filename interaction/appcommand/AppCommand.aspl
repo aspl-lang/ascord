@@ -1,0 +1,15 @@
+[public]
+class AppCommand {
+
+    [public]
+    property string name
+    [public]
+    property int type
+
+    [public]
+    method construct(string name, int type){
+        this.name = name
+        this.type = type
+    }
+
+}

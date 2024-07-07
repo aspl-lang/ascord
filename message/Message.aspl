@@ -1,0 +1,21 @@
+import ascord.user
+import ascord.channel
+
+[public]
+class Message{
+
+	[readpublic]
+	property string content
+	[readpublic]
+	property Channel channel
+	[readpublic]
+	property User sender
+	
+	[public]
+	method construct(string content, Channel channel, User sender){
+		this.content = content
+		this.channel = channel
+		this.sender = sender
+	}
+	
+}

@@ -1,0 +1,29 @@
+import ascord
+import ascord.interaction
+
+[public]
+class SlashCommandInteraction extends InteractionInstance {
+
+    [public]
+    property SlashCommand command
+
+    [public]
+    method construct(SlashCommand command, Bot bot, string id, string token, string applicationId){
+        this.command = command
+        this.bot = bot
+        this.id = id
+        this.token = token
+        this.applicationId = applicationId
+    }
+
+    [public]
+    method respondWithMessage(string message, bool ephemeral = false){
+        var flags = 0
+        if(ephemeral){
+            flags = 64
+        }
+		var data = map<string, any>{"type" => 4, "data" => map<string, any>{"content" => message, "flags" => flags}}
+        internet.post("https://discord.com/api/v10/interactions/" + id + "/" + token + "/callback", json.encode(data), bot.standardHeaders())
+    }
+
+}

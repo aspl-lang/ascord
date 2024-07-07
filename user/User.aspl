@@ -1,0 +1,21 @@
+[public]
+class User{
+
+	[readpublic]
+	property string id
+	[readpublic]
+	property string name
+	[readpublic]
+	property string? discriminator
+	[readpublic]
+	property bool isBot
+	
+	[public]
+	method construct(string id, string name, string? discriminator, bool isBot){
+		this.id = id
+		this.name = name
+		this.discriminator = discriminator
+		this.isBot = isBot
+	}
+	
+}
